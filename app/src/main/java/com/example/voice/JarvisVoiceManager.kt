@@ -29,7 +29,12 @@ class JarvisVoiceManager(
     private val _voiceTranscript = MutableStateFlow("")
     val voiceTranscript: StateFlow<String> = _voiceTranscript.asStateFlow()
 
-    val rmsDb: StateFlow<Float> = sttManager.rmsDb
+    private val _combinedRms = MutableStateFlow(0f)
+    val rmsDb: StateFlow<Float> = _combinedRms.asStateFlow()
+
+    private val _isContinuousConversationActive = MutableStateFlow(false)
+    val isContinuousConversationActive: StateFlow<Boolean> = _isContinuousConversationActive.asStateFlow()
+
     val isListening: StateFlow<Boolean> = sttManager.isListening
 
     init {
@@ -52,6 +57,29 @@ class JarvisVoiceManager(
                 }
             }
         }
+
+        // Combine STT & TTS RMS levels for fluid Arc Reactor visuals
+        coroutineScope.launch {
+            sttManager.rmsDb.collect { sttRms ->
+                if (sttManager.isListening.value) {
+                    _combinedRms.value = sttRms
+                }
+            }
+        }
+
+        coroutineScope.launch {
+            ttsManager.speakingRms.collect { ttsRms ->
+                if (ttsManager.isSpeaking.value) {
+                    _combinedRms.value = ttsRms
+                } else if (!sttManager.isListening.value) {
+                    _combinedRms.value = 0f
+                }
+            }
+        }
+    }
+
+    fun setContinuousConversation(active: Boolean) {
+        _isContinuousConversationActive.value = active
     }
 
     fun startListeningSession(
@@ -68,10 +96,12 @@ class JarvisVoiceManager(
             onFinalResult = { transcript ->
                 _voiceTranscript.value = transcript
                 _orbState.value = OrbState.THINKING
+                _combinedRms.value = 0f
                 onFinalTranscript(transcript)
             },
             onError = { error ->
                 _orbState.value = OrbState.IDLE
+                _combinedRms.value = 0f
                 onError(error)
             }
         )
@@ -84,6 +114,7 @@ class JarvisVoiceManager(
             speechRate = speechRate,
             onFinished = {
                 _orbState.value = OrbState.IDLE
+                _combinedRms.value = 0f
                 onDone()
             }
         )

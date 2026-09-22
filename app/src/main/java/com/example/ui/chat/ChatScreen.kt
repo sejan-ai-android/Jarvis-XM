@@ -110,11 +110,31 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val context = LocalContext.current
 
+    var pendingActionIsConversation by remember { mutableStateOf(false) }
+
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            viewModel.startVoiceInput()
+            if (pendingActionIsConversation) {
+                viewModel.startAudioConversation()
+            } else {
+                viewModel.startVoiceInput()
+            }
+        }
+    }
+
+    val onStartAudioConversation: () -> Unit = {
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasPermission) {
+            pendingActionIsConversation = true
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            viewModel.startAudioConversation()
         }
     }
 
@@ -125,6 +145,7 @@ fun ChatScreen(
         ) == PackageManager.PERMISSION_GRANTED
 
         if (!hasPermission) {
+            pendingActionIsConversation = false
             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         } else {
             if (uiState.isListening || uiState.orbState == OrbState.SPEAKING) {
@@ -147,21 +168,23 @@ fun ChatScreen(
         }
     }
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { onToggleVoice() }
-                    ) {
-                        JarvisVoiceOrb(
-                            state = uiState.orbState,
-                            size = 32.dp,
-                            onClick = onToggleVoice
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
+    Box(modifier = modifier.fillMaxSize()) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { onStartAudioConversation() }
+                        ) {
+                            JarvisVoiceOrb(
+                                state = uiState.orbState,
+                                size = 34.dp,
+                                rmsDb = uiState.rmsDb,
+                                onClick = onStartAudioConversation
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
                                 text = "J.A.R.V.I.S.",
@@ -239,6 +262,17 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = onStartAudioConversation,
+                        modifier = Modifier.testTag("launch_audio_conversation_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.GraphicEq,
+                            contentDescription = "Audio Conversation Mode",
+                            tint = if (uiState.isAudioConversationActive) ElectricBlue else ArcCyan
+                        )
+                    }
+
                     IconButton(
                         onClick = { viewModel.clearHistory() },
                         modifier = Modifier.testTag("clear_chat_btn")
@@ -344,7 +378,9 @@ fun ChatScreen(
                 EmptyJarvisHero(
                     userName = preferences.userName,
                     orbState = uiState.orbState,
-                    onOrbClick = onToggleVoice,
+                    rmsDb = uiState.rmsDb,
+                    onOrbClick = onStartAudioConversation,
+                    onStartAudioConversation = onStartAudioConversation,
                     onSuggestionClick = { prompt ->
                         viewModel.sendMessage(prompt)
                     },
@@ -450,7 +486,8 @@ fun ChatScreen(
                     JarvisVoiceOrb(
                         state = uiState.orbState,
                         size = 40.dp,
-                        onClick = onToggleVoice
+                        rmsDb = uiState.rmsDb,
+                        onClick = onStartAudioConversation
                     )
 
                     Spacer(modifier = Modifier.width(8.dp))
@@ -528,13 +565,30 @@ fun ChatScreen(
             }
         }
     }
+
+    // Immersive Audio-to-Audio Conversation HUD Overlay
+    AnimatedVisibility(
+        visible = uiState.isAudioConversationActive,
+        enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+        exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
+    ) {
+        AudioConversationOverlay(
+            uiState = uiState,
+            onClose = { viewModel.stopAudioConversation() },
+            onToggleListening = onToggleVoice,
+            onToggleContinuousLoop = { viewModel.toggleContinuousLoop() }
+        )
+    }
+}
 }
 
 @Composable
 fun EmptyJarvisHero(
     userName: String,
     orbState: OrbState = OrbState.IDLE,
+    rmsDb: Float = 0f,
     onOrbClick: () -> Unit = {},
+    onStartAudioConversation: () -> Unit = {},
     onSuggestionClick: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -547,11 +601,41 @@ fun EmptyJarvisHero(
     ) {
         JarvisVoiceOrb(
             state = orbState,
-            size = 120.dp,
+            size = 130.dp,
+            rmsDb = rmsDb,
             onClick = onOrbClick
         )
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // Direct Audio-to-Audio Conversation Mode Button
+        Button(
+            onClick = onStartAudioConversation,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = ElectricBlue.copy(alpha = 0.25f),
+                contentColor = ArcCyan
+            ),
+            border = BorderStroke(1.dp, ArcCyan),
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier.testTag("hero_start_audio_conversation_btn")
+        ) {
+            Icon(
+                imageVector = Icons.Filled.GraphicEq,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "START AUDIO CONVERSATION",
+                style = MaterialTheme.typography.labelMedium.copy(
+                    letterSpacing = 1.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Text(
             text = "SYSTEMS NOMINAL",
