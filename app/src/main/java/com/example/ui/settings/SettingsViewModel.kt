@@ -89,6 +89,15 @@ class SettingsViewModel(
         }
     }
 
+    fun toggleAlwaysListening(context: android.content.Context, active: Boolean) {
+        viewModelScope.launch {
+            userPreferencesRepository.setAlwaysListening(active)
+            if (active) {
+                com.example.voice.service.JarvisVoiceService.startService(context)
+            }
+        }
+    }
+
     class Factory(
         private val keyRepository: KeyRepository,
         private val userPreferencesRepository: UserPreferencesRepository

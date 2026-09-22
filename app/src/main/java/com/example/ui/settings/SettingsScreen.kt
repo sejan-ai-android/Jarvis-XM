@@ -476,6 +476,42 @@ fun SettingsScreen(
                             )
                         }
 
+                        // Always Listening mode toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Always Listening Mode",
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                )
+                                Text(
+                                    text = "Jarvis continuously listens for spoken queries and executes multi-turn conversations seamlessly.",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Switch(
+                                checked = preferences.alwaysListening,
+                                onCheckedChange = { active ->
+                                    viewModel.toggleAlwaysListening(context, active)
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = SpaceNavyDark,
+                                    checkedTrackColor = com.example.ui.theme.StatusValidGreen,
+                                    uncheckedThumbColor = Color.Gray,
+                                    uncheckedTrackColor = SurfaceBorderDark
+                                ),
+                                modifier = Modifier.testTag("always_listening_switch")
+                            )
+                        }
+
                         // Background hotword service toggle
                         Row(
                             modifier = Modifier.fillMaxWidth(),

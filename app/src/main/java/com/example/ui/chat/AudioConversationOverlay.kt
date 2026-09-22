@@ -67,6 +67,7 @@ fun AudioConversationOverlay(
     onClose: () -> Unit,
     onToggleListening: () -> Unit,
     onToggleContinuousLoop: () -> Unit,
+    onToggleAlwaysListening: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -110,7 +111,7 @@ fun AudioConversationOverlay(
                                     OrbState.LISTENING -> ElectricBlue
                                     OrbState.THINKING -> SkyGlow
                                     OrbState.SPEAKING -> ArcCyan
-                                    OrbState.IDLE -> StatusValidGreen
+                                    OrbState.IDLE -> if (uiState.isAlwaysListening) StatusValidGreen else StatusValidGreen.copy(alpha = 0.5f)
                                 }
                             )
                     )
@@ -126,16 +127,52 @@ fun AudioConversationOverlay(
                             )
                         )
                         Text(
-                            text = if (uiState.isContinuousLoopEnabled) "CONTINUOUS AUDIO • ON" else "PUSH TO TALK",
+                            text = if (uiState.isAlwaysListening) "ALWAYS LISTENING • ACTIVE" else if (uiState.isContinuousLoopEnabled) "CONTINUOUS AUDIO • ON" else "PUSH TO TALK",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (uiState.isAlwaysListening) StatusValidGreen else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         )
                     }
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Always Listening HUD Chip
+                    Surface(
+                        onClick = onToggleAlwaysListening,
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (uiState.isAlwaysListening) StatusValidGreen.copy(alpha = 0.2f) else SurfaceContainerDark,
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (uiState.isAlwaysListening) StatusValidGreen else ArcCyan.copy(alpha = 0.3f)
+                        ),
+                        modifier = Modifier.testTag("overlay_always_listening_chip")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (uiState.isAlwaysListening) StatusValidGreen else Color.Gray)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (uiState.isAlwaysListening) "ALWAYS ON" else "AUTO",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = if (uiState.isAlwaysListening) StatusValidGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 9.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
                     // Toggle continuous loop button
                     IconButton(
                         onClick = onToggleContinuousLoop,

@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -156,6 +157,20 @@ fun ChatScreen(
         }
     }
 
+    val onToggleAlwaysListening: () -> Unit = {
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasPermission) {
+            pendingActionIsConversation = false
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            viewModel.toggleAlwaysListening(context)
+        }
+    }
+
     // Keep key status synced
     LaunchedEffect(Unit) {
         viewModel.checkKeyStatus()
@@ -210,6 +225,7 @@ fun ChatScreen(
                                                 when {
                                                     uiState.isListening -> ElectricBlue
                                                     uiState.isGeminiKeyMissing -> StatusUntestedAmber
+                                                    uiState.isAlwaysListening -> StatusValidGreen
                                                     else -> StatusValidGreen
                                                 }
                                             )
@@ -217,14 +233,15 @@ fun ChatScreen(
                                     Spacer(modifier = Modifier.width(5.dp))
                                     Text(
                                         text = when {
-                                            uiState.isListening -> "LISTENING..."
+                                            uiState.isListening -> if (uiState.isAlwaysListening) "ALWAYS LISTENING..." else "LISTENING..."
                                             uiState.orbState == OrbState.SPEAKING -> "TRANSMITTING AUDIO..."
                                             uiState.isThinking -> "PROCESSING QUERY..."
                                             uiState.isGeminiKeyMissing -> "STANDBY (KEY MISSING)"
+                                            uiState.isAlwaysListening -> "ALWAYS LISTENING • ${uiState.selectedModel} ▾"
                                             else -> "ONLINE • ${uiState.selectedModel} ▾"
                                         },
                                         style = MaterialTheme.typography.labelSmall.copy(
-                                            color = if (uiState.isListening) ElectricBlue else if (uiState.isGeminiKeyMissing) StatusUntestedAmber else ArcCyan,
+                                            color = if (uiState.isListening) ElectricBlue else if (uiState.isAlwaysListening) StatusValidGreen else if (uiState.isGeminiKeyMissing) StatusUntestedAmber else ArcCyan,
                                             fontSize = 9.sp,
                                             fontFamily = FontFamily.Monospace
                                         )
@@ -236,9 +253,11 @@ fun ChatScreen(
                                     onDismissRequest = { modelMenuExpanded = false }
                                 ) {
                                     listOf(
-                                        "gemini-2.5-flash" to "Gemini 2.5 Flash (Default • Fast)",
+                                        "gemini-3.5-flash" to "Gemini 3.5 Flash (Ultra Fast • Default)",
                                         "gemini-flash-latest" to "Gemini Flash Latest",
-                                        "gemini-2.5-pro" to "Gemini 2.5 Pro (Deep Reasoning)"
+                                        "gemini-3.1-flash-lite-preview" to "Gemini 3.1 Flash Lite (High Availability)",
+                                        "gemini-2.5-flash" to "Gemini 2.5 Flash",
+                                        "gemini-3.1-pro-preview" to "Gemini 3.1 Pro (Deep Reasoning)"
                                     ).forEach { (modelId, label) ->
                                         DropdownMenuItem(
                                             text = {
@@ -262,6 +281,17 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = onToggleAlwaysListening,
+                        modifier = Modifier.testTag("always_listening_toggle_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.RecordVoiceOver,
+                            contentDescription = if (uiState.isAlwaysListening) "Always Listening Active" else "Enable Always Listening",
+                            tint = if (uiState.isAlwaysListening) StatusValidGreen else ArcCyan.copy(alpha = 0.55f)
+                        )
+                    }
+
                     IconButton(
                         onClick = onStartAudioConversation,
                         modifier = Modifier.testTag("launch_audio_conversation_btn")
@@ -379,8 +409,10 @@ fun ChatScreen(
                     userName = preferences.userName,
                     orbState = uiState.orbState,
                     rmsDb = uiState.rmsDb,
+                    isAlwaysListening = uiState.isAlwaysListening,
                     onOrbClick = onStartAudioConversation,
                     onStartAudioConversation = onStartAudioConversation,
+                    onToggleAlwaysListening = onToggleAlwaysListening,
                     onSuggestionClick = { prompt ->
                         viewModel.sendMessage(prompt)
                     },
@@ -576,7 +608,8 @@ fun ChatScreen(
             uiState = uiState,
             onClose = { viewModel.stopAudioConversation() },
             onToggleListening = onToggleVoice,
-            onToggleContinuousLoop = { viewModel.toggleContinuousLoop() }
+            onToggleContinuousLoop = { viewModel.toggleContinuousLoop() },
+            onToggleAlwaysListening = onToggleAlwaysListening
         )
     }
 }
@@ -587,8 +620,10 @@ fun EmptyJarvisHero(
     userName: String,
     orbState: OrbState = OrbState.IDLE,
     rmsDb: Float = 0f,
+    isAlwaysListening: Boolean = false,
     onOrbClick: () -> Unit = {},
     onStartAudioConversation: () -> Unit = {},
+    onToggleAlwaysListening: () -> Unit = {},
     onSuggestionClick: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -608,31 +643,65 @@ fun EmptyJarvisHero(
 
         Spacer(modifier = Modifier.height(18.dp))
 
-        // Direct Audio-to-Audio Conversation Mode Button
-        Button(
-            onClick = onStartAudioConversation,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = ElectricBlue.copy(alpha = 0.25f),
-                contentColor = ArcCyan
-            ),
-            border = BorderStroke(1.dp, ArcCyan),
-            shape = RoundedCornerShape(24.dp),
-            modifier = Modifier.testTag("hero_start_audio_conversation_btn")
+        // Direct Audio-to-Audio Conversation Mode & Always Listening Controls
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Filled.GraphicEq,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "START AUDIO CONVERSATION",
-                style = MaterialTheme.typography.labelMedium.copy(
-                    letterSpacing = 1.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
+            Button(
+                onClick = onStartAudioConversation,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = ElectricBlue.copy(alpha = 0.25f),
+                    contentColor = ArcCyan
+                ),
+                border = BorderStroke(1.dp, ArcCyan),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.testTag("hero_start_audio_conversation_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.GraphicEq,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
                 )
-            )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "AUDIO CONVERSATION",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 0.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                )
+            }
+
+            Button(
+                onClick = onToggleAlwaysListening,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isAlwaysListening) StatusValidGreen.copy(alpha = 0.25f) else SurfaceContainerDark,
+                    contentColor = if (isAlwaysListening) StatusValidGreen else ArcCyan
+                ),
+                border = BorderStroke(
+                    1.dp,
+                    if (isAlwaysListening) StatusValidGreen else ArcCyan.copy(alpha = 0.4f)
+                ),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.testTag("hero_toggle_always_listening_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.RecordVoiceOver,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (isAlwaysListening) "ALWAYS ON" else "ALWAYS LISTEN",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 0.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))

@@ -76,29 +76,42 @@ class GeminiRepository(
                 )
             )
 
-            // Resolve modern model with fallback if 404 / NOT_FOUND
+            // Resolve modern model with fallback if 404 / NOT_FOUND / 503 high demand
             val normalizedModel = when (modelName) {
-                "gemini-1.5-flash", "gemini-flash" -> "gemini-2.5-flash"
-                "gemini-1.5-pro", "gemini-pro" -> "gemini-2.5-pro"
+                "gemini-1.5-flash", "gemini-flash" -> "gemini-flash-latest"
+                "gemini-1.5-pro", "gemini-pro" -> "gemini-3.1-pro-preview"
+                "gemini-2.0-flash", "gemini-2.0-pro" -> "gemini-3.5-flash"
                 else -> modelName
             }
 
             val candidatesToTry = listOf(
                 normalizedModel,
-                "gemini-2.5-flash",
+                "gemini-3.5-flash",
                 "gemini-flash-latest",
-                "gemini-2.5-pro"
+                "gemini-3.1-flash-lite-preview",
+                "gemini-2.5-flash",
+                "gemini-3.1-pro-preview"
             ).distinct()
 
             var lastError = ""
             var lastCode = 0
 
             for (currentModel in candidatesToTry) {
-                val response = apiService.generateContent(
+                var response = apiService.generateContent(
                     model = currentModel,
                     apiKey = apiKey,
                     request = request
                 )
+
+                // If transient 503 (high demand) or 429, perform one brief retry with jitter
+                if (!response.isSuccessful && (response.code() == 503 || response.code() == 429)) {
+                    kotlinx.coroutines.delay(650)
+                    response = apiService.generateContent(
+                        model = currentModel,
+                        apiKey = apiKey,
+                        request = request
+                    )
+                }
 
                 if (response.isSuccessful) {
                     val body = response.body()
@@ -120,19 +133,51 @@ class GeminiRepository(
                         )
                     }
 
-                    // If 404 (Not Found / Model deprecated), proceed to next candidate
-                    if (response.code() == 404 || errorBody.contains("NOT_FOUND", ignoreCase = true)) {
+                    // If 404 (Not Found), 503 (High Demand / UNAVAILABLE), 429 (Rate Limit), or 500,
+                    // smoothly failover to the next candidate model in the chain
+                    val isTransientOrModelSpecific = response.code() == 404 ||
+                            response.code() == 503 ||
+                            response.code() == 429 ||
+                            response.code() == 500 ||
+                            response.code() == 504 ||
+                            errorBody.contains("NOT_FOUND", ignoreCase = true) ||
+                            errorBody.contains("UNAVAILABLE", ignoreCase = true) ||
+                            errorBody.contains("high demand", ignoreCase = true) ||
+                            errorBody.contains("RESOURCE_EXHAUSTED", ignoreCase = true)
+
+                    if (isTransientOrModelSpecific) {
                         continue
                     }
 
-                    return@withContext JarvisResult.Error("Neural core error (HTTP ${response.code()}): $errorBody")
+                    return@withContext JarvisResult.Error(formatErrorMessage(response.code(), errorBody))
                 }
             }
 
-            JarvisResult.Error("Neural core error (HTTP $lastCode): $lastError")
+            JarvisResult.Error(formatErrorMessage(lastCode, lastError))
         } catch (e: Exception) {
             JarvisResult.Error("Communications relay failure: ${e.localizedMessage ?: "Unknown connection error"}", e)
         }
+    }
+
+    private fun formatErrorMessage(code: Int, rawError: String): String {
+        return when {
+            code == 503 || rawError.contains("high demand", ignoreCase = true) || rawError.contains("UNAVAILABLE", ignoreCase = true) ->
+                "Gemini neural models are currently experiencing heavy global traffic. Failover relays attempted. Please retry your request in a moment."
+            code == 429 || rawError.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ->
+                "Gemini API rate limit reached. Please wait a few seconds before sending another transmission."
+            code == 404 || rawError.contains("NOT_FOUND", ignoreCase = true) ->
+                "Specified neural model was not found on the server cluster."
+            rawError.isNotBlank() ->
+                "Neural core error (HTTP $code): ${extractCleanErrorMessage(rawError)}"
+            else ->
+                "Neural core communication failed (HTTP $code)."
+        }
+    }
+
+    private fun extractCleanErrorMessage(rawJson: String): String {
+        val messageRegex = """"message"\s*:\s*"([^"]+)"""".toRegex()
+        val match = messageRegex.find(rawJson)
+        return match?.groupValues?.getOrNull(1) ?: rawJson.take(150)
     }
 
     private fun buildSystemPrompt(prefs: UserPreferences): String {

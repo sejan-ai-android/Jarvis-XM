@@ -21,7 +21,8 @@ data class UserPreferences(
     val speechRate: Float = 1.0f,
     val hasCompletedOnboarding: Boolean = false,
     val autoSpeakResponses: Boolean = true,
-    val backgroundVoiceActive: Boolean = false
+    val backgroundVoiceActive: Boolean = false,
+    val alwaysListening: Boolean = false
 )
 
 class UserPreferencesRepository(private val context: Context) {
@@ -35,6 +36,7 @@ class UserPreferencesRepository(private val context: Context) {
         val HAS_COMPLETED_ONBOARDING = booleanPreferencesKey("has_completed_onboarding")
         val AUTO_SPEAK = booleanPreferencesKey("auto_speak_responses")
         val BACKGROUND_VOICE = booleanPreferencesKey("background_voice_active")
+        val ALWAYS_LISTENING = booleanPreferencesKey("always_listening_active")
     }
 
     val userPreferencesFlow: Flow<UserPreferences> = context.dataStore.data.map { preferences ->
@@ -46,8 +48,15 @@ class UserPreferencesRepository(private val context: Context) {
             speechRate = preferences[Keys.SPEECH_RATE] ?: 1.0f,
             hasCompletedOnboarding = preferences[Keys.HAS_COMPLETED_ONBOARDING] ?: false,
             autoSpeakResponses = preferences[Keys.AUTO_SPEAK] ?: true,
-            backgroundVoiceActive = preferences[Keys.BACKGROUND_VOICE] ?: false
+            backgroundVoiceActive = preferences[Keys.BACKGROUND_VOICE] ?: false,
+            alwaysListening = preferences[Keys.ALWAYS_LISTENING] ?: false
         )
+    }
+
+    suspend fun setAlwaysListening(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[Keys.ALWAYS_LISTENING] = enabled
+        }
     }
 
     suspend fun setAutoSpeakResponses(enabled: Boolean) {

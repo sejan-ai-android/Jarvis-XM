@@ -1,5 +1,6 @@
 package com.example.ui.chat
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -13,6 +14,8 @@ import com.example.data.prefs.SecureKeyStore
 import com.example.data.prefs.UserPreferences
 import com.example.data.prefs.UserPreferencesRepository
 import com.example.ui.components.OrbState
+import com.example.voice.service.JarvisVoiceService
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -28,11 +31,12 @@ data class ChatUiState(
     val orbState: OrbState = OrbState.IDLE,
     val rmsDb: Float = 0f,
     val isGeminiKeyMissing: Boolean = false,
-    val selectedModel: String = "gemini-2.5-flash",
+    val selectedModel: String = "gemini-3.5-flash",
     val errorBanner: String? = null,
     val liveTranscript: String = "",
     val isAudioConversationActive: Boolean = false,
     val isContinuousLoopEnabled: Boolean = true,
+    val isAlwaysListening: Boolean = false,
     val lastSpokenResponse: String = ""
 )
 
@@ -79,6 +83,18 @@ class ChatViewModel(
         viewModelScope.launch {
             voiceManager.rmsDb.collect { rms ->
                 _uiState.value = _uiState.value.copy(rmsDb = rms)
+            }
+        }
+
+        // Initialize Always Listening from saved user preferences
+        viewModelScope.launch {
+            userPreferencesRepository.userPreferencesFlow.collect { prefs ->
+                if (_uiState.value.isAlwaysListening != prefs.alwaysListening) {
+                    _uiState.value = _uiState.value.copy(isAlwaysListening = prefs.alwaysListening)
+                    if (prefs.alwaysListening && !_uiState.value.isListening && !_uiState.value.isThinking) {
+                        startAlwaysListeningSession()
+                    }
+                }
             }
         }
     }
@@ -249,6 +265,147 @@ class ChatViewModel(
 
     fun stopVoiceInput() {
         voiceManager.stop()
+    }
+
+    fun toggleAlwaysListening(context: Context) {
+        val next = !_uiState.value.isAlwaysListening
+        _uiState.value = _uiState.value.copy(isAlwaysListening = next)
+        viewModelScope.launch {
+            userPreferencesRepository.setAlwaysListening(next)
+        }
+        if (next) {
+            JarvisVoiceService.startService(context)
+            startAlwaysListeningSession()
+        } else {
+            JarvisVoiceService.stopService(context)
+            if (_uiState.value.orbState == OrbState.LISTENING) {
+                voiceManager.stop()
+            }
+        }
+    }
+
+    private fun startAlwaysListeningSession() {
+        if (!_uiState.value.isAlwaysListening || _uiState.value.isThinking || _uiState.value.orbState == OrbState.SPEAKING) {
+            return
+        }
+
+        voiceManager.startListeningSession(
+            onFinalTranscript = { transcript ->
+                if (transcript.isNotBlank()) {
+                    sendAlwaysListeningMessage(transcript)
+                } else if (_uiState.value.isAlwaysListening) {
+                    viewModelScope.launch {
+                        delay(350)
+                        startAlwaysListeningSession()
+                    }
+                }
+            },
+            onError = { error ->
+                // When in Always Listening, silence timeouts or recognizer resets are seamless
+                if (_uiState.value.isAlwaysListening) {
+                    viewModelScope.launch {
+                        delay(450)
+                        startAlwaysListeningSession()
+                    }
+                }
+            }
+        )
+    }
+
+    private fun sendAlwaysListeningMessage(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return
+
+        val convId = _uiState.value.currentConversation?.id ?: "default_session"
+
+        viewModelScope.launch {
+            conversationRepository.insertMessage(
+                conversationId = convId,
+                sender = "user",
+                content = trimmed
+            )
+
+            val hasKey = keyRepository.hasKey(SecureKeyStore.KEY_GEMINI)
+            if (!hasKey) {
+                val fallbackMsg = "Sir, my neural reasoning core is offline. Please configure your Gemini API key in Settings."
+                conversationRepository.insertMessage(
+                    conversationId = convId,
+                    sender = "assistant",
+                    content = fallbackMsg
+                )
+                _uiState.value = _uiState.value.copy(
+                    isGeminiKeyMissing = true,
+                    lastSpokenResponse = fallbackMsg,
+                    errorBanner = "Gemini API key is required."
+                )
+                voiceManager.speakAssistantResponse(fallbackMsg, preferences.value.speechRate) {
+                    if (_uiState.value.isAlwaysListening) {
+                        viewModelScope.launch {
+                            delay(300)
+                            startAlwaysListeningSession()
+                        }
+                    }
+                }
+                return@launch
+            }
+
+            _uiState.value = _uiState.value.copy(isThinking = true, errorBanner = null)
+            voiceManager.setThinking()
+
+            val history = conversationRepository.getRecentMessages(convId, 20).reversed()
+            val result = geminiRepository.generateAssistantResponse(
+                history = history,
+                userMessage = trimmed,
+                preferences = preferences.value,
+                modelName = _uiState.value.selectedModel
+            )
+
+            when (result) {
+                is JarvisResult.Success -> {
+                    conversationRepository.insertMessage(
+                        conversationId = convId,
+                        sender = "assistant",
+                        content = result.data
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        isThinking = false,
+                        lastSpokenResponse = result.data
+                    )
+
+                    // Speak response and automatically resume always listening loop
+                    voiceManager.speakAssistantResponse(result.data, preferences.value.speechRate) {
+                        if (_uiState.value.isAlwaysListening) {
+                            viewModelScope.launch {
+                                delay(300)
+                                startAlwaysListeningSession()
+                            }
+                        }
+                    }
+                }
+                is JarvisResult.Error -> {
+                    _uiState.value = _uiState.value.copy(
+                        isThinking = false,
+                        isGeminiKeyMissing = result.isKeyMissing,
+                        errorBanner = result.message
+                    )
+                    voiceManager.setIdle()
+                    val errorAlert = "⚠️ Protocol alert: ${result.message}"
+                    conversationRepository.insertMessage(
+                        conversationId = convId,
+                        sender = "assistant",
+                        content = errorAlert
+                    )
+                    // Resume listening standby even on error
+                    if (_uiState.value.isAlwaysListening) {
+                        viewModelScope.launch {
+                            delay(1200)
+                            startAlwaysListeningSession()
+                        }
+                    }
+                }
+                is JarvisResult.Loading -> {}
+            }
+        }
     }
 
     private fun initializeDefaultConversation() {
