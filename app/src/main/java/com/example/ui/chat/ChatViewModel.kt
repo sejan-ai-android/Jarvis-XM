@@ -31,7 +31,7 @@ data class ChatUiState(
     val orbState: OrbState = OrbState.IDLE,
     val rmsDb: Float = 0f,
     val isGeminiKeyMissing: Boolean = false,
-    val selectedModel: String = "gemini-3.5-flash",
+    val selectedModel: String = "gemini-2.5-flash",
     val errorBanner: String? = null,
     val liveTranscript: String = "",
     val isAudioConversationActive: Boolean = false,

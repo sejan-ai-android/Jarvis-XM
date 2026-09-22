@@ -18,14 +18,17 @@ class GeminiRepository(
 
     private val apiService: GeminiApiService
 
+    @Volatile
+    private var activeWorkingModel: String? = null
+
     init {
         val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = HttpLoggingInterceptor.Level.NONE
         }
         val okHttpClient = OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
             .addInterceptor(logging)
             .build()
 
@@ -57,8 +60,8 @@ class GeminiRepository(
             val systemPrompt = buildSystemPrompt(preferences)
             val contents = mutableListOf<Content>()
 
-            // Take last 20 messages for context
-            val contextMessages = history.takeLast(20)
+            // Take last 8 messages for optimal prompt size and lowest latency
+            val contextMessages = history.takeLast(8)
             for (msg in contextMessages) {
                 val role = if (msg.sender == "user") "user" else "model"
                 contents.add(Content(role = role, parts = listOf(Part(text = msg.content))))
@@ -71,8 +74,8 @@ class GeminiRepository(
                 systemInstruction = Content(parts = listOf(Part(text = systemPrompt))),
                 contents = contents,
                 generationConfig = GenerationConfig(
-                    temperature = 0.7,
-                    maxOutputTokens = 2048
+                    temperature = 0.5,
+                    maxOutputTokens = 600
                 )
             )
 
@@ -80,16 +83,17 @@ class GeminiRepository(
             val normalizedModel = when (modelName) {
                 "gemini-1.5-flash", "gemini-flash" -> "gemini-flash-latest"
                 "gemini-1.5-pro", "gemini-pro" -> "gemini-3.1-pro-preview"
-                "gemini-2.0-flash", "gemini-2.0-pro" -> "gemini-3.5-flash"
+                "gemini-2.0-flash", "gemini-2.0-pro" -> "gemini-2.5-flash"
                 else -> modelName
             }
 
-            val candidatesToTry = listOf(
+            val candidatesToTry = listOfNotNull(
+                activeWorkingModel,
                 normalizedModel,
-                "gemini-3.5-flash",
+                "gemini-2.5-flash",
                 "gemini-flash-latest",
                 "gemini-3.1-flash-lite-preview",
-                "gemini-2.5-flash",
+                "gemini-3.5-flash",
                 "gemini-3.1-pro-preview"
             ).distinct()
 
@@ -105,7 +109,7 @@ class GeminiRepository(
 
                 // If transient 503 (high demand) or 429, perform one brief retry with jitter
                 if (!response.isSuccessful && (response.code() == 503 || response.code() == 429)) {
-                    kotlinx.coroutines.delay(650)
+                    kotlinx.coroutines.delay(400)
                     response = apiService.generateContent(
                         model = currentModel,
                         apiKey = apiKey,
@@ -117,6 +121,7 @@ class GeminiRepository(
                     val body = response.body()
                     val candidateText = body?.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                     if (!candidateText.isNullOrBlank()) {
+                        activeWorkingModel = currentModel
                         return@withContext JarvisResult.Success(candidateText.trim())
                     } else {
                         return@withContext JarvisResult.Error("Jarvis received an empty transmission from the neural network.")
@@ -189,8 +194,11 @@ class GeminiRepository(
             - Tone mode: ${prefs.assistantTone}.
             - Output language preference: ${prefs.selectedLanguage}.
             - You have access to real-time tools, system controls, scheduling, notes, and device telemetry.
-            - Provide clear, concise, highly structured, and insightful answers. Use bold headings, bullet points, or concise code blocks when appropriate.
-            - Avoid robotic clichés. Emulate the classic, polished wit, composed demeanor, and calm resourcefulness of Jarvis.
+            - SPEED & BREVITY MANDATE (CRITICAL):
+              * For standard queries and conversational voice turns, respond immediately and concisely in 1 to 3 crisp sentences (max 40-50 words).
+              * Only provide comprehensive multi-paragraph explanations or code blocks when explicitly requested by the user.
+              * Avoid introductory filler phrases like "Certainly, here is...", "As an AI...", or "I would be happy to help you with that". Go straight to the answer.
+              * Emulate the classic, polished wit, composed demeanor, and calm efficiency of Jarvis.
         """.trimIndent()
     }
 

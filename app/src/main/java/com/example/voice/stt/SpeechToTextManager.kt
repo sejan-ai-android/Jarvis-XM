@@ -30,6 +30,7 @@ class SpeechToTextManager(private val context: Context) {
 
     private var onFinalResultCallback: ((String) -> Unit)? = null
     private var onErrorCallback: ((String) -> Unit)? = null
+    private var endOfSpeechSafetyRunnable: Runnable? = null
 
     val isRecognitionAvailable: Boolean
         get() = SpeechRecognizer.isRecognitionAvailable(context)
@@ -65,9 +66,27 @@ class SpeechToTextManager(private val context: Context) {
 
                         override fun onEndOfSpeech() {
                             _isListening.value = false
+                            // Ultra-fast response: If we already have partial recognized speech,
+                            // don't wait indefinitely for Android's slow onResults timeout.
+                            val currentPartial = _partialText.value.trim()
+                            if (currentPartial.isNotBlank()) {
+                                endOfSpeechSafetyRunnable = Runnable {
+                                    val cb = onFinalResultCallback
+                                    if (cb != null) {
+                                        onFinalResultCallback = null
+                                        onErrorCallback = null
+                                        _rmsDb.value = 0f
+                                        cb.invoke(currentPartial)
+                                        stopListeningInternal()
+                                    }
+                                }
+                                mainHandler.postDelayed(endOfSpeechSafetyRunnable!!, 500L)
+                            }
                         }
 
                         override fun onError(error: Int) {
+                            endOfSpeechSafetyRunnable?.let { mainHandler.removeCallbacks(it) }
+                            endOfSpeechSafetyRunnable = null
                             _isListening.value = false
                             _rmsDb.value = 0f
                             val message = when (error) {
@@ -87,13 +106,18 @@ class SpeechToTextManager(private val context: Context) {
                         }
 
                         override fun onResults(results: Bundle?) {
+                            endOfSpeechSafetyRunnable?.let { mainHandler.removeCallbacks(it) }
+                            endOfSpeechSafetyRunnable = null
                             _isListening.value = false
                             _rmsDb.value = 0f
                             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                            val text = matches?.firstOrNull().orEmpty()
+                            val text = matches?.firstOrNull()?.trim() ?: _partialText.value.trim()
+                            val cb = onFinalResultCallback
+                            onFinalResultCallback = null
+                            onErrorCallback = null
                             if (text.isNotBlank()) {
-                                _partialText.value = text.trim()
-                                onFinalResultCallback?.invoke(text.trim())
+                                _partialText.value = text
+                                cb?.invoke(text)
                             } else {
                                 onErrorCallback?.invoke("No speech detected")
                             }
@@ -115,10 +139,11 @@ class SpeechToTextManager(private val context: Context) {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 800L)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    // Cut silence detection delays from 2000ms down to 600ms for rapid turnaround
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 450L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 300L)
                 }
 
                 _isListening.value = true
@@ -151,6 +176,8 @@ class SpeechToTextManager(private val context: Context) {
     }
 
     private fun stopListeningInternal() {
+        endOfSpeechSafetyRunnable?.let { mainHandler.removeCallbacks(it) }
+        endOfSpeechSafetyRunnable = null
         try {
             speechRecognizer?.stopListening()
             speechRecognizer?.destroy()

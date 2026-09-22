@@ -253,10 +253,10 @@ fun ChatScreen(
                                     onDismissRequest = { modelMenuExpanded = false }
                                 ) {
                                     listOf(
-                                        "gemini-3.5-flash" to "Gemini 3.5 Flash (Ultra Fast • Default)",
+                                        "gemini-2.5-flash" to "Gemini 2.5 Flash (Ultra Fast • Default)",
                                         "gemini-flash-latest" to "Gemini Flash Latest",
-                                        "gemini-3.1-flash-lite-preview" to "Gemini 3.1 Flash Lite (High Availability)",
-                                        "gemini-2.5-flash" to "Gemini 2.5 Flash",
+                                        "gemini-3.1-flash-lite-preview" to "Gemini 3.1 Flash Lite (Low Latency)",
+                                        "gemini-3.5-flash" to "Gemini 3.5 Flash",
                                         "gemini-3.1-pro-preview" to "Gemini 3.1 Pro (Deep Reasoning)"
                                     ).forEach { (modelId, label) ->
                                         DropdownMenuItem(
