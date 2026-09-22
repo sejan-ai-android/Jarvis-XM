@@ -1,0 +1,46 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer Arc Ring -->
+    <path
+        android:pathData="M54,54m-28,0a28,28 0 1,0 56,0a28,28 0 1,0 -56,0"
+        android:strokeWidth="2.5"
+        android:strokeColor="#00F0FF"
+        android:fillColor="#00000000" />
+
+    <!-- 8 Radial Power Nodes -->
+    <path
+        android:pathData="M54,20L54,26 M54,82L54,88 M20,54L26,54 M82,54L88,54 M30,30L34,34 M74,74L78,78 M78,30L74,34 M30,78L34,74"
+        android:strokeWidth="3.0"
+        android:strokeLineCap="round"
+        android:strokeColor="#38BDF8"
+        android:fillColor="#00000000" />
+
+    <!-- Inner Segmented Ring -->
+    <path
+        android:pathData="M54,54m-18,0a18,18 0 1,0 36,0a18,18 0 1,0 -36,0"
+        android:strokeWidth="2.0"
+        android:strokeColor="#0284C7"
+        android:fillColor="#00000000" />
+
+    <!-- Center Reactor Core Glow -->
+    <path
+        android:pathData="M54,54m-9,0a9,9 0 1,0 18,0a9,9 0 1,0 -18,0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="45"
+                android:startY="45"
+                android:endX="63"
+                android:endY="63"
+                android:type="radial"
+                android:gradientRadius="12">
+                <item android:color="#FFFFFF" android:offset="0.0" />
+                <item android:color="#00F0FF" android:offset="0.5" />
+                <item android:color="#0284C7" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

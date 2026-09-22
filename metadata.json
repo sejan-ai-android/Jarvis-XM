@@ -1,0 +1,6 @@
+{
+  "name": "Jarvis",
+  "description": "Intelligent AI assistant powered by Google Gemini with runtime secure key management, voice interface, and proactive tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
