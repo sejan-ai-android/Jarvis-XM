@@ -48,6 +48,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -104,6 +106,7 @@ fun ChatScreen(
     val uiState by viewModel.uiState.collectAsState()
     val preferences by viewModel.preferences.collectAsState()
     var inputText by remember { mutableStateOf("") }
+    var modelMenuExpanded by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
 
@@ -168,34 +171,69 @@ fun ChatScreen(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
+                            Box {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
-                                        .size(7.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            when {
-                                                uiState.isListening -> ElectricBlue
-                                                uiState.isGeminiKeyMissing -> StatusUntestedAmber
-                                                else -> StatusValidGreen
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .clickable { modelMenuExpanded = true }
+                                        .padding(horizontal = 2.dp, vertical = 1.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                when {
+                                                    uiState.isListening -> ElectricBlue
+                                                    uiState.isGeminiKeyMissing -> StatusUntestedAmber
+                                                    else -> StatusValidGreen
+                                                }
+                                            )
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = when {
+                                            uiState.isListening -> "LISTENING..."
+                                            uiState.orbState == OrbState.SPEAKING -> "TRANSMITTING AUDIO..."
+                                            uiState.isThinking -> "PROCESSING QUERY..."
+                                            uiState.isGeminiKeyMissing -> "STANDBY (KEY MISSING)"
+                                            else -> "ONLINE • ${uiState.selectedModel} ▾"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            color = if (uiState.isListening) ElectricBlue else if (uiState.isGeminiKeyMissing) StatusUntestedAmber else ArcCyan,
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    )
+                                }
+
+                                DropdownMenu(
+                                    expanded = modelMenuExpanded,
+                                    onDismissRequest = { modelMenuExpanded = false }
+                                ) {
+                                    listOf(
+                                        "gemini-2.5-flash" to "Gemini 2.5 Flash (Default • Fast)",
+                                        "gemini-flash-latest" to "Gemini Flash Latest",
+                                        "gemini-2.5-pro" to "Gemini 2.5 Pro (Deep Reasoning)"
+                                    ).forEach { (modelId, label) ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = label,
+                                                    style = MaterialTheme.typography.bodySmall.copy(
+                                                        fontWeight = if (uiState.selectedModel == modelId) FontWeight.Bold else FontWeight.Normal,
+                                                        color = if (uiState.selectedModel == modelId) ArcCyan else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                )
+                                            },
+                                            onClick = {
+                                                viewModel.setSelectedModel(modelId)
+                                                modelMenuExpanded = false
                                             }
                                         )
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-                                Text(
-                                    text = when {
-                                        uiState.isListening -> "LISTENING..."
-                                        uiState.orbState == OrbState.SPEAKING -> "TRANSMITTING AUDIO..."
-                                        uiState.isThinking -> "PROCESSING QUERY..."
-                                        uiState.isGeminiKeyMissing -> "STANDBY (KEY MISSING)"
-                                        else -> "ONLINE • ${uiState.selectedModel}"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        color = if (uiState.isListening) ElectricBlue else if (uiState.isGeminiKeyMissing) StatusUntestedAmber else ArcCyan,
-                                        fontSize = 9.sp,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                )
+                                    }
+                                }
                             }
                         }
                     }

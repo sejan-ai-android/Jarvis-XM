@@ -27,7 +27,7 @@ data class ChatUiState(
     val isListening: Boolean = false,
     val orbState: OrbState = OrbState.IDLE,
     val isGeminiKeyMissing: Boolean = false,
-    val selectedModel: String = "gemini-1.5-flash",
+    val selectedModel: String = "gemini-2.5-flash",
     val errorBanner: String? = null,
     val liveTranscript: String = ""
 )

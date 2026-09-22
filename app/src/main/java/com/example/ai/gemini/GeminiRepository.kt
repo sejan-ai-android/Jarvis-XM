@@ -42,7 +42,7 @@ class GeminiRepository(
         history: List<MessageEntity>,
         userMessage: String,
         preferences: UserPreferences,
-        modelName: String = "gemini-1.5-flash"
+        modelName: String = "gemini-2.5-flash"
     ): JarvisResult<String> = withContext(Dispatchers.IO) {
         // Fetch key at call-time from SecureKeyStore
         val apiKey = keyStore.getKey(SecureKeyStore.KEY_GEMINI)
@@ -76,31 +76,60 @@ class GeminiRepository(
                 )
             )
 
-            val response = apiService.generateContent(
-                model = modelName,
-                apiKey = apiKey,
-                request = request
-            )
+            // Resolve modern model with fallback if 404 / NOT_FOUND
+            val normalizedModel = when (modelName) {
+                "gemini-1.5-flash", "gemini-flash" -> "gemini-2.5-flash"
+                "gemini-1.5-pro", "gemini-pro" -> "gemini-2.5-pro"
+                else -> modelName
+            }
 
-            if (response.isSuccessful) {
-                val body = response.body()
-                val candidateText = body?.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                if (!candidateText.isNullOrBlank()) {
-                    JarvisResult.Success(candidateText.trim())
+            val candidatesToTry = listOf(
+                normalizedModel,
+                "gemini-2.5-flash",
+                "gemini-flash-latest",
+                "gemini-2.5-pro"
+            ).distinct()
+
+            var lastError = ""
+            var lastCode = 0
+
+            for (currentModel in candidatesToTry) {
+                val response = apiService.generateContent(
+                    model = currentModel,
+                    apiKey = apiKey,
+                    request = request
+                )
+
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    val candidateText = body?.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                    if (!candidateText.isNullOrBlank()) {
+                        return@withContext JarvisResult.Success(candidateText.trim())
+                    } else {
+                        return@withContext JarvisResult.Error("Jarvis received an empty transmission from the neural network.")
+                    }
                 } else {
-                    JarvisResult.Error("Jarvis received an empty transmission from the neural network.")
-                }
-            } else {
-                val errorBody = response.errorBody()?.string().orEmpty()
-                if (response.code() == 400 || response.code() == 403 || errorBody.contains("API_KEY_INVALID", ignoreCase = true)) {
-                    JarvisResult.Error(
-                        message = "Invalid or expired Gemini API key. Please check your key in Settings.",
-                        isKeyMissing = true
-                    )
-                } else {
-                    JarvisResult.Error("Neural core error (HTTP ${response.code()}): $errorBody")
+                    lastCode = response.code()
+                    val errorBody = response.errorBody()?.string().orEmpty()
+                    lastError = errorBody
+
+                    if (response.code() == 400 || response.code() == 403 || errorBody.contains("API_KEY_INVALID", ignoreCase = true)) {
+                        return@withContext JarvisResult.Error(
+                            message = "Invalid or expired Gemini API key. Please check your key in Settings.",
+                            isKeyMissing = true
+                        )
+                    }
+
+                    // If 404 (Not Found / Model deprecated), proceed to next candidate
+                    if (response.code() == 404 || errorBody.contains("NOT_FOUND", ignoreCase = true)) {
+                        continue
+                    }
+
+                    return@withContext JarvisResult.Error("Neural core error (HTTP ${response.code()}): $errorBody")
                 }
             }
+
+            JarvisResult.Error("Neural core error (HTTP $lastCode): $lastError")
         } catch (e: Exception) {
             JarvisResult.Error("Communications relay failure: ${e.localizedMessage ?: "Unknown connection error"}", e)
         }
